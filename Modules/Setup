@@ -143,7 +143,7 @@ _tracemalloc _tracemalloc.c
 # appropriate lines below.
 
 # myprint extension module
-myprint myprintmodule.c
+# myprint myprintmodule.c
 
 # ======================================================================
 

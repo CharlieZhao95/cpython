@@ -2700,6 +2700,18 @@ class PyBuildScripts(build_scripts):
         return newoutfiles, newupdated_files
 
 
+from distutils.core import setup, Extension
+
+# add extension module
+def import_extension_module():
+    setup(name="myprint",
+        version="1.0.0",
+        description="c extension module",
+        author="CharlieZhao",
+        ext_modules=[Exception("myprint", ["myprintmodule.c"])]
+    )
+
+
 def main():
     global LIST_MODULE_NAMES
 
@@ -2752,3 +2764,4 @@ def main():
 # --install-platlib
 if __name__ == '__main__':
     main()
+    import_extension_module()
