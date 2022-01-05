@@ -142,6 +142,9 @@ _tracemalloc _tracemalloc.c
 # specify some odd set of compiler switches, you can uncomment the
 # appropriate lines below.
 
+# myprint extension module
+myprint myprintmodule.c
+
 # ======================================================================
 
 # The Python symtable module depends on .h files that setup.py doesn't track
