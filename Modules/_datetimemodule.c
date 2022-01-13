@@ -6694,6 +6694,42 @@ _datetime_exec(PyObject *module)
     return 0;
 }
 
+static int
+_datetimemodule_traverse(PyObject *module, visitproc visit, void *arg)
+{
+    Py_VISIT(PyDateTime_TimeZone_UTC);
+    Py_VISIT(PyDateTime_Epoch);
+    Py_VISIT(us_per_ms);
+    Py_VISIT(us_per_second);
+    Py_VISIT(us_per_minute);
+    Py_VISIT(seconds_per_day);
+    Py_VISIT(us_per_hour);
+    Py_VISIT(us_per_day);
+    Py_VISIT(us_per_week);
+    return 0;
+}
+
+static int
+_datetimemodule_clear(PyObject *module)
+{
+    Py_CLEAR(PyDateTime_TimeZone_UTC);
+    Py_CLEAR(PyDateTime_Epoch);
+    Py_CLEAR(us_per_ms);
+    Py_CLEAR(us_per_second);
+    Py_CLEAR(us_per_minute);
+    Py_CLEAR(seconds_per_day);
+    Py_CLEAR(us_per_hour);
+    Py_CLEAR(us_per_day);
+    Py_CLEAR(us_per_week);
+    return 0;
+}
+
+static void
+_datetimemodule_free(void *module)
+{
+    _datetimemodule_clear((PyObject *)module);
+}
+
 static struct PyModuleDef_Slot _datetime_slots[] = {
     {Py_mod_exec, _datetime_exec},
     {0, NULL}
@@ -6709,6 +6745,9 @@ static struct PyModuleDef datetimemodule = {
     .m_size = 0,
     .m_methods = module_methods,
     .m_slots = _datetime_slots,
+    .m_traverse = _datetimemodule_traverse,
+    .m_clear = _datetimemodule_clear,
+    .m_free = _datetimemodule_free,
 };
 
 PyMODINIT_FUNC
