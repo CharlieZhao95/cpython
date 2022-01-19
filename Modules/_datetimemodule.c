@@ -23,22 +23,25 @@
 #  include <winsock2.h>         /* struct timeval */
 #endif
 
-#define PyDate_Check(op) PyObject_TypeCheck(op, &PyDateTime_DateType)
-#define PyDate_CheckExact(op) Py_IS_TYPE(op, &PyDateTime_DateType)
+#define PyDatetime_STATE(op) \
+    ((_datetimemodule_state *)PyType_GetModuleState(Py_TYPE(op)))
 
-#define PyDateTime_Check(op) PyObject_TypeCheck(op, &PyDateTime_DateTimeType)
-#define PyDateTime_CheckExact(op) Py_IS_TYPE(op, &PyDateTime_DateTimeType)
+#define PyDate_Check(op) PyObject_TypeCheck(op, PyDatetime_STATE(op)->PyDateTime_DateType)
+#define PyDate_CheckExact(op) Py_IS_TYPE(op, PyDatetime_STATE(op)->PyDateTime_DateType)
 
-#define PyTime_Check(op) PyObject_TypeCheck(op, &PyDateTime_TimeType)
-#define PyTime_CheckExact(op) Py_IS_TYPE(op, &PyDateTime_TimeType)
+#define PyDateTime_Check(op) PyObject_TypeCheck(op, PyDatetime_STATE(op)->PyDateTime_DateTimeType)
+#define PyDateTime_CheckExact(op) Py_IS_TYPE(op, PyDatetime_STATE(op)->PyDateTime_DateTimeType)
 
-#define PyDelta_Check(op) PyObject_TypeCheck(op, &PyDateTime_DeltaType)
-#define PyDelta_CheckExact(op) Py_IS_TYPE(op, &PyDateTime_DeltaType)
+#define PyTime_Check(op) PyObject_TypeCheck(op, PyDatetime_STATE(op)->PyDateTime_TimeType)
+#define PyTime_CheckExact(op) Py_IS_TYPE(op, PyDatetime_STATE(op)->PyDateTime_TimeType)
 
-#define PyTZInfo_Check(op) PyObject_TypeCheck(op, &PyDateTime_TZInfoType)
-#define PyTZInfo_CheckExact(op) Py_IS_TYPE(op, &PyDateTime_TZInfoType)
+#define PyDelta_Check(op) PyObject_TypeCheck(op, PyDatetime_STATE(op)->PyDateTime_DeltaType)
+#define PyDelta_CheckExact(op) Py_IS_TYPE(op, PyDatetime_STATE(op)->PyDateTime_DeltaType)
 
-#define PyTimezone_Check(op) PyObject_TypeCheck(op, &PyDateTime_TimeZoneType)
+#define PyTZInfo_Check(op) PyObject_TypeCheck(op, PyDatetime_STATE(op)->PyDateTime_TZInfoType)
+#define PyTZInfo_CheckExact(op) Py_IS_TYPE(op, PyDatetime_STATE(op)->PyDateTime_TZInfoType)
+
+#define PyTimezone_Check(op) PyObject_TypeCheck(op, PyDatetime_STATE(op)->PyDateTime_TimeZoneType)
 
 /*[clinic input]
 module datetime
@@ -130,13 +133,22 @@ class datetime.IsoCalendarDate "PyDateTime_IsoCalendarDate *" "&PyDateTime_IsoCa
 #define MONTH_IS_SANE(M) ((unsigned int)(M) - 1 < 12)
 
 /* Forward declarations. */
-static PyTypeObject PyDateTime_DateType;
-static PyTypeObject PyDateTime_DateTimeType;
-static PyTypeObject PyDateTime_DeltaType;
-static PyTypeObject PyDateTime_IsoCalendarDateType;
-static PyTypeObject PyDateTime_TimeType;
-static PyTypeObject PyDateTime_TZInfoType;
-static PyTypeObject PyDateTime_TimeZoneType;
+typedef struct {
+    PyTypeObject *PyDateTime_DateType;
+    PyTypeObject *PyDateTime_DateTimeType;
+    PyTypeObject *PyDateTime_DeltaType;
+    PyTypeObject *PyDateTime_IsoCalendarDateType;
+    PyTypeObject *PyDateTime_TimeType;
+    PyTypeObject *PyDateTime_TZInfoType;
+    PyTypeObject *PyDateTime_TimeZoneType;
+} _datetimemodule_state;
+
+static inline _datetimemodule_state*
+get_datetime_state(PyObject *module) {
+    void *state = PyModule_GetState(module);
+    assert(state != NULL);
+    return (_datetimemodule_state*)state;
+}
 
 static int check_tzinfo_subclass(PyObject *p);
 
@@ -863,8 +875,8 @@ new_date_ex(int year, int month, int day, PyTypeObject *type)
     return (PyObject *)self;
 }
 
-#define new_date(year, month, day) \
-    new_date_ex(year, month, day, &PyDateTime_DateType)
+#define new_date(year, month, day, state) \
+    new_date_ex(year, month, day, state->PyDateTime_DateType)
 
 // Forward declaration
 static PyObject *
@@ -875,11 +887,12 @@ static PyObject *
 new_date_subclass_ex(int year, int month, int day, PyObject *cls)
 {
     PyObject *result;
+    _datetimemodule_state *state = PyDatetime_STATE(cls);
     // We have "fast path" constructors for two subclasses: date and datetime
-    if ((PyTypeObject *)cls == &PyDateTime_DateType) {
+    if ((PyTypeObject *)cls == state->PyDateTime_DateType) {
         result = new_date_ex(year, month, day, (PyTypeObject *)cls);
     }
-    else if ((PyTypeObject *)cls == &PyDateTime_DateTimeType) {
+    else if ((PyTypeObject *)cls == state->PyDateTime_DateTimeType) {
         result = new_datetime_ex(year, month, day, 0, 0, 0, 0, Py_None,
                                  (PyTypeObject *)cls);
     }
@@ -933,19 +946,21 @@ new_datetime_ex(int year, int month, int day, int hour, int minute,
                             tzinfo, 0, type);
 }
 
-#define new_datetime(y, m, d, hh, mm, ss, us, tzinfo, fold) \
+#define new_datetime(y, m, d, hh, mm, ss, us, tzinfo, fold, state) \
     new_datetime_ex2(y, m, d, hh, mm, ss, us, tzinfo, fold, \
-                    &PyDateTime_DateTimeType)
+                    state->PyDateTime_DateTimeType)
 
 static PyObject *
 new_datetime_subclass_fold_ex(int year, int month, int day, int hour, int minute,
                               int second, int usecond, PyObject *tzinfo,
                               int fold, PyObject *cls) {
     PyObject* dt;
-    if ((PyTypeObject*)cls == &PyDateTime_DateTimeType) {
+    _datetimemodule_state *state = PyDatetime_STATE(cls);
+
+    if ((PyTypeObject*)cls == state->PyDateTime_DateTimeType) {
         // Use the fast path constructor
         dt = new_datetime(year, month, day, hour, minute, second, usecond,
-                          tzinfo, fold);
+                          tzinfo, fold, state);
     } else {
         // Subclass
         dt = PyObject_CallFunction(cls, "iiiiiiiO",
@@ -1010,10 +1025,10 @@ new_time_ex(int hour, int minute, int second, int usecond,
     return new_time_ex2(hour, minute, second, usecond, tzinfo, 0, type);
 }
 
-#define new_time(hh, mm, ss, us, tzinfo, fold)                       \
-    new_time_ex2(hh, mm, ss, us, tzinfo, fold, &PyDateTime_TimeType)
+#define new_time(hh, mm, ss, us, tzinfo, fold, state)                       \
+    new_time_ex2(hh, mm, ss, us, tzinfo, fold, state->PyDateTime_TimeType)
 
-/* Create a timedelta instance.  Normalize the members iff normalize is
+/* Create a timedelta instance.  Normalize the members if normalize is
  * true.  Passing false is a speed optimization, if you know for sure
  * that seconds and microseconds are already in their proper ranges.  In any
  * case, raises OverflowError and returns NULL if the normalized days is out
@@ -1043,8 +1058,8 @@ new_delta_ex(int days, int seconds, int microseconds, int normalize,
     return (PyObject *) self;
 }
 
-#define new_delta(d, s, us, normalize)  \
-    new_delta_ex(d, s, us, normalize, &PyDateTime_DeltaType)
+#define new_delta(d, s, us, normalize, state)  \
+    new_delta_ex(d, s, us, normalize, state->PyDateTime_DeltaType)
 
 
 typedef struct
@@ -1067,7 +1082,8 @@ static PyObject *
 create_timezone(PyObject *offset, PyObject *name)
 {
     PyDateTime_TimeZone *self;
-    PyTypeObject *type = &PyDateTime_TimeZoneType;
+    _datetimemodule_state *state = PyDatetime_STATE(offset);
+    PyTypeObject *type = state->PyDateTime_TimeZoneType;
 
     assert(offset != NULL);
     assert(PyDelta_Check(offset));
@@ -1089,6 +1105,8 @@ static int delta_bool(PyDateTime_Delta *self);
 static PyObject *
 new_timezone(PyObject *offset, PyObject *name)
 {
+    _datetimemodule_state *state = PyDatetime_STATE(offset);
+
     assert(offset != NULL);
     assert(PyDelta_Check(offset));
     assert(name == NULL || PyUnicode_Check(name));
@@ -1305,7 +1323,7 @@ append_keyword_fold(PyObject *repr, int fold)
 }
 
 static inline PyObject *
-tzinfo_from_isoformat_results(int rv, int tzoffset, int tz_useconds)
+tzinfo_from_isoformat_results(int rv, int tzoffset, int tz_useconds, _datetimemodule_state *state)
 {
     PyObject *tzinfo;
     if (rv == 1) {
@@ -1315,7 +1333,7 @@ tzinfo_from_isoformat_results(int rv, int tzoffset, int tz_useconds)
             return PyDateTime_TimeZone_UTC;
         }
 
-        PyObject *delta = new_delta(0, tzoffset, tz_useconds, 1);
+        PyObject *delta = new_delta(0, tzoffset, tz_useconds, 1, state);
         if (delta == NULL) {
             return NULL;
         }
@@ -1888,8 +1906,8 @@ BadDivmod:
     goto Done;
 }
 
-#define microseconds_to_delta(pymicros) \
-    microseconds_to_delta_ex(pymicros, &PyDateTime_DeltaType)
+#define microseconds_to_delta(pymicros, state) \
+    microseconds_to_delta_ex(pymicros, state->PyDateTime_DeltaType)
 
 static PyObject *
 multiply_int_timedelta(PyObject *intobj, PyDateTime_Delta *delta)
@@ -1897,6 +1915,7 @@ multiply_int_timedelta(PyObject *intobj, PyDateTime_Delta *delta)
     PyObject *pyus_in;
     PyObject *pyus_out;
     PyObject *result;
+    _datetimemodule_state *state = PyDatetime_STATE(delta);
 
     pyus_in = delta_to_microseconds(delta);
     if (pyus_in == NULL)
@@ -1907,7 +1926,7 @@ multiply_int_timedelta(PyObject *intobj, PyDateTime_Delta *delta)
     if (pyus_out == NULL)
         return NULL;
 
-    result = microseconds_to_delta(pyus_out);
+    result = microseconds_to_delta(pyus_out, state);
     Py_DECREF(pyus_out);
     return result;
 }
@@ -1946,6 +1965,7 @@ multiply_truedivide_timedelta_float(PyDateTime_Delta *delta, PyObject *floatobj,
     PyObject *result = NULL;
     PyObject *pyus_in = NULL, *temp, *pyus_out;
     PyObject *ratio = NULL;
+    _datetimemodule_state *state = PyDatetime_STATE(delta);
 
     pyus_in = delta_to_microseconds(delta);
     if (pyus_in == NULL)
@@ -1963,7 +1983,7 @@ multiply_truedivide_timedelta_float(PyDateTime_Delta *delta, PyObject *floatobj,
     Py_DECREF(temp);
     if (pyus_out == NULL)
         goto error;
-    result = microseconds_to_delta(pyus_out);
+    result = microseconds_to_delta(pyus_out, state);
     Py_DECREF(pyus_out);
  error:
     Py_XDECREF(pyus_in);
@@ -1978,6 +1998,7 @@ divide_timedelta_int(PyDateTime_Delta *delta, PyObject *intobj)
     PyObject *pyus_in;
     PyObject *pyus_out;
     PyObject *result;
+    _datetimemodule_state *state = PyDatetime_STATE(delta);
 
     pyus_in = delta_to_microseconds(delta);
     if (pyus_in == NULL)
@@ -1988,7 +2009,7 @@ divide_timedelta_int(PyDateTime_Delta *delta, PyObject *intobj)
     if (pyus_out == NULL)
         return NULL;
 
-    result = microseconds_to_delta(pyus_out);
+    result = microseconds_to_delta(pyus_out, state);
     Py_DECREF(pyus_out);
     return result;
 }
@@ -2045,13 +2066,14 @@ truedivide_timedelta_int(PyDateTime_Delta *delta, PyObject *i)
     PyObject *result;
     PyObject *pyus_in, *pyus_out;
     pyus_in = delta_to_microseconds(delta);
+    _datetimemodule_state *state = PyDatetime_STATE(delta);
     if (pyus_in == NULL)
         return NULL;
     pyus_out = divide_nearest(pyus_in, i);
     Py_DECREF(pyus_in);
     if (pyus_out == NULL)
         return NULL;
-    result = microseconds_to_delta(pyus_out);
+    result = microseconds_to_delta(pyus_out, state);
     Py_DECREF(pyus_out);
 
     return result;
@@ -2071,7 +2093,8 @@ delta_add(PyObject *left, PyObject *right)
         int seconds = GET_TD_SECONDS(left) + GET_TD_SECONDS(right);
         int microseconds = GET_TD_MICROSECONDS(left) +
                            GET_TD_MICROSECONDS(right);
-        result = new_delta(days, seconds, microseconds, 1);
+        _datetimemodule_state *state = PyDatetime_STATE(left);
+        result = new_delta(days, seconds, microseconds, 1, state);
     }
 
     if (result == Py_NotImplemented)
@@ -2085,7 +2108,7 @@ delta_negative(PyDateTime_Delta *self)
     return new_delta(-GET_TD_DAYS(self),
                      -GET_TD_SECONDS(self),
                      -GET_TD_MICROSECONDS(self),
-                     1);
+                     1, PyDatetime_STATE(self));
 }
 
 static PyObject *
@@ -2097,7 +2120,7 @@ delta_positive(PyDateTime_Delta *self)
     return new_delta(GET_TD_DAYS(self),
                      GET_TD_SECONDS(self),
                      GET_TD_MICROSECONDS(self),
-                     0);
+                     0, PyDatetime_STATE(self));
 }
 
 static PyObject *
@@ -2130,7 +2153,7 @@ delta_subtract(PyObject *left, PyObject *right)
         int seconds = GET_TD_SECONDS(left) - GET_TD_SECONDS(right);
         int microseconds = GET_TD_MICROSECONDS(left) -
                            GET_TD_MICROSECONDS(right);
-        result = new_delta(days, seconds, microseconds, 1);
+        result = new_delta(days, seconds, microseconds, 1, PyDatetime_STATE(left));
     }
 
     if (result == Py_NotImplemented)
@@ -2276,7 +2299,7 @@ delta_remainder(PyObject *left, PyObject *right)
     if (pyus_remainder == NULL)
         return NULL;
 
-    remainder = microseconds_to_delta(pyus_remainder);
+    remainder = microseconds_to_delta(pyus_remainder, PyDatetime_STATE(left));
     Py_DECREF(pyus_remainder);
     if (remainder == NULL)
         return NULL;
@@ -2312,7 +2335,7 @@ delta_divmod(PyObject *left, PyObject *right)
     if (divmod == NULL)
         return NULL;
 
-    delta = microseconds_to_delta(PyTuple_GET_ITEM(divmod, 1));
+    delta = microseconds_to_delta(PyTuple_GET_ITEM(divmod, 1), PyDatetime_STATE(left));
     if (delta == NULL) {
         Py_DECREF(divmod);
         return NULL;
@@ -2676,82 +2699,36 @@ PyDoc_STR("Difference between two datetime values.\n\n"
           "All arguments are optional and default to 0.\n"
           "Arguments may be integers or floats, and may be positive or negative.");
 
-static PyNumberMethods delta_as_number = {
-    delta_add,                                  /* nb_add */
-    delta_subtract,                             /* nb_subtract */
-    delta_multiply,                             /* nb_multiply */
-    delta_remainder,                            /* nb_remainder */
-    delta_divmod,                               /* nb_divmod */
-    0,                                          /* nb_power */
-    (unaryfunc)delta_negative,                  /* nb_negative */
-    (unaryfunc)delta_positive,                  /* nb_positive */
-    (unaryfunc)delta_abs,                       /* nb_absolute */
-    (inquiry)delta_bool,                        /* nb_bool */
-    0,                                          /*nb_invert*/
-    0,                                          /*nb_lshift*/
-    0,                                          /*nb_rshift*/
-    0,                                          /*nb_and*/
-    0,                                          /*nb_xor*/
-    0,                                          /*nb_or*/
-    0,                                          /*nb_int*/
-    0,                                          /*nb_reserved*/
-    0,                                          /*nb_float*/
-    0,                                          /*nb_inplace_add*/
-    0,                                          /*nb_inplace_subtract*/
-    0,                                          /*nb_inplace_multiply*/
-    0,                                          /*nb_inplace_remainder*/
-    0,                                          /*nb_inplace_power*/
-    0,                                          /*nb_inplace_lshift*/
-    0,                                          /*nb_inplace_rshift*/
-    0,                                          /*nb_inplace_and*/
-    0,                                          /*nb_inplace_xor*/
-    0,                                          /*nb_inplace_or*/
-    delta_divide,                               /* nb_floor_divide */
-    delta_truedivide,                           /* nb_true_divide */
-    0,                                          /* nb_inplace_floor_divide */
-    0,                                          /* nb_inplace_true_divide */
+static PyType_Slot PyDateTime_DeltaType_slots[] = {
+    {Py_nb_add, delta_add},
+    {Py_nb_subtract, delta_subtract},
+    {Py_nb_multiply, delta_multiply},
+    {Py_nb_remainder, delta_remainder},
+    {Py_nb_divmod, delta_divmod},
+    {Py_nb_negative, (unaryfunc)delta_negative},
+    {Py_nb_positive, (unaryfunc)delta_positive},
+    {Py_nb_absolute, (unaryfunc)delta_abs},
+    {Py_nb_bool, (inquiry)delta_bool},
+    {Py_nb_floor_divide, delta_divide},
+    {Py_nb_true_divide, delta_truedivide},
+
+    {Py_tp_repr, (reprfunc)delta_repr},
+    {Py_tp_hash, (hashfunc)delta_hash},
+    {Py_tp_str, (reprfunc)delta_str},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_doc, (void *)delta_doc},
+    {Py_tp_richcompare, delta_richcompare},
+    {Py_tp_methods, delta_methods},
+    {Py_tp_members, delta_members},
+    {Py_tp_new, delta_new},
+    {0, NULL}
 };
 
-static PyTypeObject PyDateTime_DeltaType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "datetime.timedelta",                               /* tp_name */
-    sizeof(PyDateTime_Delta),                           /* tp_basicsize */
-    0,                                                  /* tp_itemsize */
-    0,                                                  /* tp_dealloc */
-    0,                                                  /* tp_vectorcall_offset */
-    0,                                                  /* tp_getattr */
-    0,                                                  /* tp_setattr */
-    0,                                                  /* tp_as_async */
-    (reprfunc)delta_repr,                               /* tp_repr */
-    &delta_as_number,                                   /* tp_as_number */
-    0,                                                  /* tp_as_sequence */
-    0,                                                  /* tp_as_mapping */
-    (hashfunc)delta_hash,                               /* tp_hash */
-    0,                                                  /* tp_call */
-    (reprfunc)delta_str,                                /* tp_str */
-    PyObject_GenericGetAttr,                            /* tp_getattro */
-    0,                                                  /* tp_setattro */
-    0,                                                  /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,           /* tp_flags */
-    delta_doc,                                          /* tp_doc */
-    0,                                                  /* tp_traverse */
-    0,                                                  /* tp_clear */
-    delta_richcompare,                                  /* tp_richcompare */
-    0,                                                  /* tp_weaklistoffset */
-    0,                                                  /* tp_iter */
-    0,                                                  /* tp_iternext */
-    delta_methods,                                      /* tp_methods */
-    delta_members,                                      /* tp_members */
-    0,                                                  /* tp_getset */
-    0,                                                  /* tp_base */
-    0,                                                  /* tp_dict */
-    0,                                                  /* tp_descr_get */
-    0,                                                  /* tp_descr_set */
-    0,                                                  /* tp_dictoffset */
-    0,                                                  /* tp_init */
-    0,                                                  /* tp_alloc */
-    delta_new,                                          /* tp_new */
-    0,                                                  /* tp_free */
+static PyType_Spec PyDateTime_DeltaType_spec = {
+    .name = "datetime.timedelta",
+    .basicsize = sizeof(PyDateTime_Delta),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .slots = PyDateTime_DeltaType_slots
 };
 
 /*
@@ -3126,7 +3103,7 @@ date_subtract(PyObject *left, PyObject *right)
             int right_ord = ymd_to_ord(GET_YEAR(right),
                                        GET_MONTH(right),
                                        GET_DAY(right));
-            return new_delta(left_ord - right_ord, 0, 0, 0);
+            return new_delta(left_ord - right_ord, 0, 0, 0, PyDatetime_STATE(left));
         }
         if (PyDelta_Check(right)) {
             /* date - delta */
@@ -3311,17 +3288,20 @@ static PyMethodDef iso_calendar_date_methods[] = {
     {NULL, NULL},
 };
 
-static PyTypeObject PyDateTime_IsoCalendarDateType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "datetime.IsoCalendarDate",
-    .tp_basicsize = sizeof(PyDateTime_IsoCalendarDate),
-    .tp_repr = (reprfunc) iso_calendar_date_repr,
-    .tp_flags = Py_TPFLAGS_DEFAULT,
-    .tp_doc = iso_calendar_date__doc__,
-    .tp_methods = iso_calendar_date_methods,
-    .tp_getset = iso_calendar_date_getset,
-    // .tp_base = &PyTuple_Type,  // filled in PyInit__datetime
-    .tp_new = iso_calendar_date_new,
+static PyType_Slot PyDateTime_IsoCalendarDateType_slots[] = {
+    {Py_tp_repr, (reprfunc)iso_calendar_date_repr},
+    {Py_tp_doc, iso_calendar_date__doc__},
+    {Py_tp_methods, iso_calendar_date_methods},
+    {Py_tp_getset, iso_calendar_date_getset},
+    {Py_tp_new, iso_calendar_date_new},
+    {0, NULL}
+};
+
+static PyType_Spec PyDateTime_IsoCalendarDateType_spec = {
+    .name = "datetime.IsoCalendarDate",
+    .basicsize = sizeof(PyDateTime_IsoCalendarDate),
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = PyDateTime_DeltaType_slots
 };
 
 /*[clinic input]
@@ -3354,6 +3334,7 @@ iso_calendar_date_new_impl(PyTypeObject *type, int year, int week,
 static PyObject *
 date_isocalendar(PyDateTime_Date *self, PyObject *Py_UNUSED(ignored))
 {
+    _datetimemodule_state *state = PyDatetime_STATE(self);
     int  year         = GET_YEAR(self);
     int  week1_monday = iso_week1_monday(year);
     int today         = ymd_to_ord(year, GET_MONTH(self), GET_DAY(self));
@@ -3371,7 +3352,7 @@ date_isocalendar(PyDateTime_Date *self, PyObject *Py_UNUSED(ignored))
         week = 0;
     }
 
-    PyObject* v = iso_calendar_date_new_impl(&PyDateTime_IsoCalendarDateType,
+    PyObject* v = iso_calendar_date_new_impl(state->PyDateTime_IsoCalendarDateType,
                     year, week + 1, day + 1);
     if (v == NULL) {
         return NULL;
@@ -3545,59 +3526,29 @@ static PyMethodDef date_methods[] = {
 static const char date_doc[] =
 PyDoc_STR("date(year, month, day) --> date object");
 
-static PyNumberMethods date_as_number = {
-    date_add,                                           /* nb_add */
-    date_subtract,                                      /* nb_subtract */
-    0,                                                  /* nb_multiply */
-    0,                                                  /* nb_remainder */
-    0,                                                  /* nb_divmod */
-    0,                                                  /* nb_power */
-    0,                                                  /* nb_negative */
-    0,                                                  /* nb_positive */
-    0,                                                  /* nb_absolute */
-    0,                                                  /* nb_bool */
+
+
+static PyType_Slot PyDateTime_DateType_slots[] = {
+    {Py_nb_add, date_add},
+    {Py_nb_subtract, date_subtract},
+
+    {Py_tp_repr, (reprfunc)date_repr},
+    {Py_tp_hash, (hashfunc)date_hash},
+    {Py_tp_str, (reprfunc)date_str},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_doc, (void *)date_doc},
+    {Py_tp_richcompare, date_richcompare},
+    {Py_tp_methods, date_methods},
+    {Py_tp_getset, date_getset},
+    {Py_tp_new, date_new},
+    {0, NULL}
 };
 
-static PyTypeObject PyDateTime_DateType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "datetime.date",                                    /* tp_name */
-    sizeof(PyDateTime_Date),                            /* tp_basicsize */
-    0,                                                  /* tp_itemsize */
-    0,                                                  /* tp_dealloc */
-    0,                                                  /* tp_vectorcall_offset */
-    0,                                                  /* tp_getattr */
-    0,                                                  /* tp_setattr */
-    0,                                                  /* tp_as_async */
-    (reprfunc)date_repr,                                /* tp_repr */
-    &date_as_number,                                    /* tp_as_number */
-    0,                                                  /* tp_as_sequence */
-    0,                                                  /* tp_as_mapping */
-    (hashfunc)date_hash,                                /* tp_hash */
-    0,                                                  /* tp_call */
-    (reprfunc)date_str,                                 /* tp_str */
-    PyObject_GenericGetAttr,                            /* tp_getattro */
-    0,                                                  /* tp_setattro */
-    0,                                                  /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,           /* tp_flags */
-    date_doc,                                           /* tp_doc */
-    0,                                                  /* tp_traverse */
-    0,                                                  /* tp_clear */
-    date_richcompare,                                   /* tp_richcompare */
-    0,                                                  /* tp_weaklistoffset */
-    0,                                                  /* tp_iter */
-    0,                                                  /* tp_iternext */
-    date_methods,                                       /* tp_methods */
-    0,                                                  /* tp_members */
-    date_getset,                                        /* tp_getset */
-    0,                                                  /* tp_base */
-    0,                                                  /* tp_dict */
-    0,                                                  /* tp_descr_get */
-    0,                                                  /* tp_descr_set */
-    0,                                                  /* tp_dictoffset */
-    0,                                                  /* tp_init */
-    0,                                                  /* tp_alloc */
-    date_new,                                           /* tp_new */
-    0,                                                  /* tp_free */
+static PyType_Spec PyDateTime_DateType_spec = {
+    .name = "datetime.date",
+    .basicsize = sizeof(PyDateTime_Date),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .slots = PyDateTime_DateType_slots
 };
 
 /*
@@ -3807,46 +3758,19 @@ static PyMethodDef tzinfo_methods[] = {
 static const char tzinfo_doc[] =
 PyDoc_STR("Abstract base class for time zone info objects.");
 
-static PyTypeObject PyDateTime_TZInfoType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "datetime.tzinfo",                          /* tp_name */
-    sizeof(PyDateTime_TZInfo),                  /* tp_basicsize */
-    0,                                          /* tp_itemsize */
-    0,                                          /* tp_dealloc */
-    0,                                          /* tp_vectorcall_offset */
-    0,                                          /* tp_getattr */
-    0,                                          /* tp_setattr */
-    0,                                          /* tp_as_async */
-    0,                                          /* tp_repr */
-    0,                                          /* tp_as_number */
-    0,                                          /* tp_as_sequence */
-    0,                                          /* tp_as_mapping */
-    0,                                          /* tp_hash */
-    0,                                          /* tp_call */
-    0,                                          /* tp_str */
-    PyObject_GenericGetAttr,                    /* tp_getattro */
-    0,                                          /* tp_setattro */
-    0,                                          /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,   /* tp_flags */
-    tzinfo_doc,                                 /* tp_doc */
-    0,                                          /* tp_traverse */
-    0,                                          /* tp_clear */
-    0,                                          /* tp_richcompare */
-    0,                                          /* tp_weaklistoffset */
-    0,                                          /* tp_iter */
-    0,                                          /* tp_iternext */
-    tzinfo_methods,                             /* tp_methods */
-    0,                                          /* tp_members */
-    0,                                          /* tp_getset */
-    0,                                          /* tp_base */
-    0,                                          /* tp_dict */
-    0,                                          /* tp_descr_get */
-    0,                                          /* tp_descr_set */
-    0,                                          /* tp_dictoffset */
-    0,                                          /* tp_init */
-    0,                                          /* tp_alloc */
-    PyType_GenericNew,                          /* tp_new */
-    0,                                          /* tp_free */
+static PyType_Slot PyDateTime_TZInfoType_slots[] = {
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_doc, tzinfo_doc},
+    {Py_tp_methods, tzinfo_methods},
+    {Py_tp_new, PyType_GenericNew},
+    {0, NULL}
+};
+
+static PyType_Spec PyDateTime_TZInfoType_spec = {
+    .name = "datetime.tzinfo",
+    .basicsize = sizeof(PyDateTime_TZInfo),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .slots = PyDateTime_TZInfoType_slots
 };
 
 static char *timezone_kws[] = {"offset", "name", NULL};
@@ -3856,8 +3780,9 @@ timezone_new(PyTypeObject *type, PyObject *args, PyObject *kw)
 {
     PyObject *offset;
     PyObject *name = NULL;
+    _datetimemodule_state *state = PyType_GetModuleState(type);
     if (PyArg_ParseTupleAndKeywords(args, kw, "O!|U:timezone", timezone_kws,
-                                    &PyDateTime_DeltaType, &offset, &name))
+                                    state->PyDateTime_DeltaType, &offset, &name))
         return new_timezone(offset, name);
 
     return NULL;
@@ -4043,45 +3968,24 @@ static PyMethodDef timezone_methods[] = {
 static const char timezone_doc[] =
 PyDoc_STR("Fixed offset from UTC implementation of tzinfo.");
 
-static PyTypeObject PyDateTime_TimeZoneType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "datetime.timezone",              /* tp_name */
-    sizeof(PyDateTime_TimeZone),      /* tp_basicsize */
-    0,                                /* tp_itemsize */
-    (destructor)timezone_dealloc,     /* tp_dealloc */
-    0,                                /* tp_vectorcall_offset */
-    0,                                /* tp_getattr */
-    0,                                /* tp_setattr */
-    0,                                /* tp_as_async */
-    (reprfunc)timezone_repr,          /* tp_repr */
-    0,                                /* tp_as_number */
-    0,                                /* tp_as_sequence */
-    0,                                /* tp_as_mapping */
-    (hashfunc)timezone_hash,          /* tp_hash */
-    0,                                /* tp_call */
-    (reprfunc)timezone_str,           /* tp_str */
-    0,                                /* tp_getattro */
-    0,                                /* tp_setattro */
-    0,                                /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT,               /* tp_flags */
-    timezone_doc,                     /* tp_doc */
-    0,                                /* tp_traverse */
-    0,                                /* tp_clear */
-    (richcmpfunc)timezone_richcompare,/* tp_richcompare */
-    0,                                /* tp_weaklistoffset */
-    0,                                /* tp_iter */
-    0,                                /* tp_iternext */
-    timezone_methods,                 /* tp_methods */
-    0,                                /* tp_members */
-    0,                                /* tp_getset */
-    0,                                /* tp_base; filled in PyInit__datetime */
-    0,                                /* tp_dict */
-    0,                                /* tp_descr_get */
-    0,                                /* tp_descr_set */
-    0,                                /* tp_dictoffset */
-    0,                                /* tp_init */
-    0,                                /* tp_alloc */
-    timezone_new,                     /* tp_new */
+static PyType_Slot PyDateTime_TimeZoneType_slots[] = {
+    {Py_tp_dealloc, (destructor)timezone_dealloc},
+    {Py_tp_repr, (reprfunc)timezone_repr},
+    {Py_tp_hash, (hashfunc)timezone_hash},
+    {Py_tp_str, (reprfunc)timezone_str},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_doc, timezone_doc},
+    {Py_tp_richcompare, (richcmpfunc)timezone_richcompare},
+    {Py_tp_methods, timezone_methods},
+    {Py_tp_new, timezone_new},
+    {0, NULL}
+};
+
+static PyType_Spec PyDateTime_TimeZoneType_spec = {
+    .name = "datetime.timezone",
+    .basicsize = sizeof(PyDateTime_TimeZone),
+    .flags = Py_TPFLAGS_DEFAULT,
+    .slots = PyDateTime_TimeZoneType_slots
 };
 
 /*
@@ -4518,7 +4422,7 @@ time_hash(PyDateTime_Time *self)
                       TIME_GET_MINUTE(self) * 60 +
                       TIME_GET_SECOND(self);
             microseconds = TIME_GET_MICROSECOND(self);
-            temp1 = new_delta(0, seconds, microseconds, 1);
+            temp1 = new_delta(0, seconds, microseconds, 1, PyDatetime_STATE(self));
             if (temp1 == NULL) {
                 Py_DECREF(offset);
                 return -1;
@@ -4580,6 +4484,7 @@ time_fromisoformat(PyObject *cls, PyObject *tstr) {
 
     Py_ssize_t len;
     const char *p = PyUnicode_AsUTF8AndSize(tstr, &len);
+     _datetimemodule_state *state = PyDatetime_STATE(cls);
 
     if (p == NULL) {
         goto invalid_string_error;
@@ -4596,15 +4501,15 @@ time_fromisoformat(PyObject *cls, PyObject *tstr) {
     }
 
     PyObject *tzinfo = tzinfo_from_isoformat_results(rv, tzoffset,
-                                                     tzimicrosecond);
+                                                     tzimicrosecond, state);
 
     if (tzinfo == NULL) {
         return NULL;
     }
 
     PyObject *t;
-    if ( (PyTypeObject *)cls == &PyDateTime_TimeType ) {
-        t = new_time(hour, minute, second, microsecond, tzinfo, 0);
+    if ( (PyTypeObject *)cls == state->PyDateTime_TimeType ) {
+        t = new_time(hour, minute, second, microsecond, tzinfo, 0, state);
     } else {
         t = PyObject_CallFunction(cls, "iiiiO",
                                   hour, minute, second, microsecond, tzinfo);
@@ -4709,46 +4614,26 @@ PyDoc_STR("time([hour[, minute[, second[, microsecond[, tzinfo]]]]]) --> a time 
 All arguments are optional. tzinfo may be None, or an instance of\n\
 a tzinfo subclass. The remaining arguments may be ints.\n");
 
-static PyTypeObject PyDateTime_TimeType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "datetime.time",                            /* tp_name */
-    sizeof(PyDateTime_Time),                    /* tp_basicsize */
-    0,                                          /* tp_itemsize */
-    (destructor)time_dealloc,                   /* tp_dealloc */
-    0,                                          /* tp_vectorcall_offset */
-    0,                                          /* tp_getattr */
-    0,                                          /* tp_setattr */
-    0,                                          /* tp_as_async */
-    (reprfunc)time_repr,                        /* tp_repr */
-    0,                                          /* tp_as_number */
-    0,                                          /* tp_as_sequence */
-    0,                                          /* tp_as_mapping */
-    (hashfunc)time_hash,                        /* tp_hash */
-    0,                                          /* tp_call */
-    (reprfunc)time_str,                         /* tp_str */
-    PyObject_GenericGetAttr,                    /* tp_getattro */
-    0,                                          /* tp_setattro */
-    0,                                          /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, /* tp_flags */
-    time_doc,                                   /* tp_doc */
-    0,                                          /* tp_traverse */
-    0,                                          /* tp_clear */
-    time_richcompare,                           /* tp_richcompare */
-    0,                                          /* tp_weaklistoffset */
-    0,                                          /* tp_iter */
-    0,                                          /* tp_iternext */
-    time_methods,                               /* tp_methods */
-    0,                                          /* tp_members */
-    time_getset,                                /* tp_getset */
-    0,                                          /* tp_base */
-    0,                                          /* tp_dict */
-    0,                                          /* tp_descr_get */
-    0,                                          /* tp_descr_set */
-    0,                                          /* tp_dictoffset */
-    0,                                          /* tp_init */
-    time_alloc,                                 /* tp_alloc */
-    time_new,                                   /* tp_new */
-    0,                                          /* tp_free */
+static PyType_Slot PyDateTime_TimeType_slots[] = {
+    {Py_tp_dealloc, (destructor)time_dealloc},
+    {Py_tp_repr, (reprfunc)time_repr},
+    {Py_tp_hash, (hashfunc)time_hash},
+    {Py_tp_str, (reprfunc)time_str},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_doc, time_doc},
+    {Py_tp_richcompare, time_richcompare},
+    {Py_tp_methods, delta_methods},
+    {Py_tp_getset, time_getset},
+    {Py_tp_alloc, time_alloc},
+    {Py_tp_new, time_new},
+    {0, NULL}
+};
+
+static PyType_Spec PyDateTime_TimeType_spec = {
+    .name = "datetime.time",
+    .basicsize = sizeof(PyDateTime_Time),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .slots = PyDateTime_TimeType_slots
 };
 
 /*
@@ -5179,9 +5064,10 @@ datetime_combine(PyObject *cls, PyObject *args, PyObject *kw)
     PyObject *tzinfo = NULL;
     PyObject *result = NULL;
 
+    _datetimemodule_state *state = PyDatetime_STATE(cls);
     if (PyArg_ParseTupleAndKeywords(args, kw, "O!O!|O:combine", keywords,
-                                    &PyDateTime_DateType, &date,
-                                    &PyDateTime_TimeType, &time, &tzinfo)) {
+                                    state->PyDateTime_DateType, &date,
+                                    state->PyDateTime_TimeType, &time, &tzinfo)) {
         if (tzinfo == NULL) {
             if (HASTZINFO(time))
                 tzinfo = ((PyDateTime_Time *)time)->tzinfo;
@@ -5269,6 +5155,7 @@ datetime_fromisoformat(PyObject *cls, PyObject *dtstr)
     int year = 0, month = 0, day = 0;
     int hour = 0, minute = 0, second = 0, microsecond = 0;
     int tzoffset = 0, tzusec = 0;
+    _datetimemodule_state *state = PyDatetime_STATE(cls);
 
     // date has a fixed length of 10
     int rv = parse_isoformat_date(p, &year, &month, &day);
@@ -5300,7 +5187,7 @@ datetime_fromisoformat(PyObject *cls, PyObject *dtstr)
         goto invalid_string_error;
     }
 
-    PyObject *tzinfo = tzinfo_from_isoformat_results(rv, tzoffset, tzusec);
+    PyObject *tzinfo = tzinfo_from_isoformat_results(rv, tzoffset, tzusec, state);
     if (tzinfo == NULL) {
         goto error;
     }
@@ -5421,6 +5308,7 @@ datetime_subtract(PyObject *left, PyObject *right)
             /* datetime - datetime */
             PyObject *offset1, *offset2, *offdiff = NULL;
             int delta_d, delta_s, delta_us;
+            _datetimemodule_state *state = PyDatetime_STATE(left);
 
             if (GET_DT_TZINFO(left) == GET_DT_TZINFO(right)) {
                 offset2 = offset1 = Py_None;
@@ -5474,7 +5362,7 @@ datetime_subtract(PyObject *left, PyObject *right)
                        DATE_GET_SECOND(right));
             delta_us = DATE_GET_MICROSECOND(left) -
                        DATE_GET_MICROSECOND(right);
-            result = new_delta(delta_d, delta_s, delta_us, 1);
+            result = new_delta(delta_d, delta_s, delta_us, 1, state);
             if (result == NULL)
                 return NULL;
 
@@ -5709,6 +5597,8 @@ datetime_richcompare(PyObject *self, PyObject *other, int op)
         Py_RETURN_NOTIMPLEMENTED;
     }
 
+    _datetimemodule_state *state = PyDatetime_STATE(self);
+
     if (GET_DT_TZINFO(self) == GET_DT_TZINFO(other)) {
         diff = memcmp(((PyDateTime_DateTime *)self)->data,
                       ((PyDateTime_DateTime *)other)->data,
@@ -5785,6 +5675,7 @@ static Py_hash_t
 datetime_hash(PyDateTime_DateTime *self)
 {
     if (self->hashcode == -1) {
+        _datetimemodule_state *state = PyDatetime_STATE(self);
         PyObject *offset, *self0;
         if (DATE_GET_FOLD(self)) {
             self0 = new_datetime_ex2(GET_YEAR(self),
@@ -5826,7 +5717,7 @@ datetime_hash(PyDateTime_DateTime *self)
                       DATE_GET_SECOND(self);
             temp1 = new_delta(days, seconds,
                               DATE_GET_MICROSECOND(self),
-                              1);
+                              1, state);
             if (temp1 == NULL) {
                 Py_DECREF(offset);
                 return -1;
@@ -5859,6 +5750,7 @@ datetime_replace(PyDateTime_DateTime *self, PyObject *args, PyObject *kw)
     int us = DATE_GET_MICROSECOND(self);
     PyObject *tzinfo = HASTZINFO(self) ? self->tzinfo : Py_None;
     int fold = DATE_GET_FOLD(self);
+    _datetimemodule_state *state = PyDatetime_STATE(self);
 
     if (! PyArg_ParseTupleAndKeywords(args, kw, "|iiiiiiiO$i:replace",
                                       datetime_kws,
@@ -5882,7 +5774,7 @@ datetime_replace(PyDateTime_DateTime *self, PyObject *args, PyObject *kw)
 }
 
 static PyObject *
-local_timezone_from_timestamp(time_t timestamp)
+local_timezone_from_timestamp(_datetimemodule_state *state, time_t timestamp)
 {
     PyObject *result = NULL;
     PyObject *delta;
@@ -5894,7 +5786,7 @@ local_timezone_from_timestamp(time_t timestamp)
         return NULL;
 #ifdef HAVE_STRUCT_TM_TM_ZONE
     zone = local_time_tm.tm_zone;
-    delta = new_delta(0, local_time_tm.tm_gmtoff, 0, 1);
+    delta = new_delta(0, local_time_tm.tm_gmtoff, 0, 1, state);
 #else /* HAVE_STRUCT_TM_TM_ZONE */
     {
         PyObject *local_time, *utc_time;
@@ -5907,7 +5799,7 @@ local_timezone_from_timestamp(time_t timestamp)
                                   local_time_tm.tm_mday,
                                   local_time_tm.tm_hour,
                                   local_time_tm.tm_min,
-                                  local_time_tm.tm_sec, 0, Py_None, 0);
+                                  local_time_tm.tm_sec, 0, Py_None, 0, state);
         if (local_time == NULL) {
             return NULL;
         }
@@ -5918,7 +5810,7 @@ local_timezone_from_timestamp(time_t timestamp)
                                 utc_time_tm.tm_mday,
                                 utc_time_tm.tm_hour,
                                 utc_time_tm.tm_min,
-                                utc_time_tm.tm_sec, 0, Py_None, 0);
+                                utc_time_tm.tm_sec, 0, Py_None, 0, state);
         if (utc_time == NULL) {
             Py_DECREF(local_time);
             return NULL;
@@ -5944,7 +5836,7 @@ local_timezone_from_timestamp(time_t timestamp)
 }
 
 static PyObject *
-local_timezone(PyDateTime_DateTime *utc_time)
+local_timezone(_datetimemodule_state *state, PyDateTime_DateTime *utc_time)
 {
     time_t timestamp;
     PyObject *delta;
@@ -5954,7 +5846,7 @@ local_timezone(PyDateTime_DateTime *utc_time)
     delta = datetime_subtract((PyObject *)utc_time, PyDateTime_Epoch);
     if (delta == NULL)
         return NULL;
-    one_second = new_delta(0, 1, 0, 0);
+    one_second = new_delta(0, 1, 0, 0, state);
     if (one_second == NULL) {
         Py_DECREF(delta);
         return NULL;
@@ -5969,7 +5861,7 @@ local_timezone(PyDateTime_DateTime *utc_time)
     Py_DECREF(seconds);
     if (timestamp == -1 && PyErr_Occurred())
         return NULL;
-    return local_timezone_from_timestamp(timestamp);
+    return local_timezone_from_timestamp(state, timestamp);
 }
 
 static long long
@@ -5977,7 +5869,7 @@ local_to_seconds(int year, int month, int day,
                  int hour, int minute, int second, int fold);
 
 static PyObject *
-local_timezone_from_local(PyDateTime_DateTime *local_dt)
+local_timezone_from_local(_datetimemodule_state *state, PyDateTime_DateTime *local_dt)
 {
     long long seconds;
     time_t timestamp;
@@ -5992,7 +5884,7 @@ local_timezone_from_local(PyDateTime_DateTime *local_dt)
         return NULL;
     /* XXX: add bounds check */
     timestamp = seconds - epoch;
-    return local_timezone_from_timestamp(timestamp);
+    return local_timezone_from_timestamp(state, timestamp);
 }
 
 static PyDateTime_DateTime *
@@ -6004,6 +5896,7 @@ datetime_astimezone(PyDateTime_DateTime *self, PyObject *args, PyObject *kw)
     PyObject *self_tzinfo;
     PyObject *tzinfo = Py_None;
     static char *keywords[] = {"tz", NULL};
+    _datetimemodule_state *state = PyDatetime_STATE(self);
 
     if (! PyArg_ParseTupleAndKeywords(args, kw, "|O:astimezone", keywords,
                                       &tzinfo))
@@ -6014,7 +5907,7 @@ datetime_astimezone(PyDateTime_DateTime *self, PyObject *args, PyObject *kw)
 
     if (!HASTZINFO(self) || self->tzinfo == Py_None) {
   naive:
-        self_tzinfo = local_timezone_from_local(self);
+        self_tzinfo = local_timezone_from_local(state, self);
         if (self_tzinfo == NULL)
             return NULL;
     } else {
@@ -6080,7 +5973,7 @@ datetime_astimezone(PyDateTime_DateTime *self, PyObject *args, PyObject *kw)
     /* Attach new tzinfo and let fromutc() do the rest. */
     temp = result->tzinfo;
     if (tzinfo == Py_None) {
-        tzinfo = local_timezone(result);
+        tzinfo = local_timezone(state, result);
         if (tzinfo == NULL) {
             Py_DECREF(result);
             return NULL;
@@ -6209,7 +6102,8 @@ datetime_getdate(PyDateTime_DateTime *self, PyObject *Py_UNUSED(ignored))
 {
     return new_date(GET_YEAR(self),
                     GET_MONTH(self),
-                    GET_DAY(self));
+                    GET_DAY(self),
+                    PyDatetime_STATE(self));
 }
 
 static PyObject *
@@ -6220,7 +6114,8 @@ datetime_gettime(PyDateTime_DateTime *self, PyObject *Py_UNUSED(ignored))
                     DATE_GET_SECOND(self),
                     DATE_GET_MICROSECOND(self),
                     Py_None,
-                    DATE_GET_FOLD(self));
+                    DATE_GET_FOLD(self),
+                    PyDatetime_STATE(self));
 }
 
 static PyObject *
@@ -6231,7 +6126,8 @@ datetime_gettimetz(PyDateTime_DateTime *self, PyObject *Py_UNUSED(ignored))
                     DATE_GET_SECOND(self),
                     DATE_GET_MICROSECOND(self),
                     GET_DT_TZINFO(self),
-                    DATE_GET_FOLD(self));
+                    DATE_GET_FOLD(self),
+                    PyDatetime_STATE(self));
 }
 
 static PyObject *
@@ -6413,60 +6309,28 @@ PyDoc_STR("datetime(year, month, day[, hour[, minute[, second[, microsecond[,tzi
 The year, month and day arguments are required. tzinfo may be None, or an\n\
 instance of a tzinfo subclass. The remaining arguments may be ints.\n");
 
-static PyNumberMethods datetime_as_number = {
-    datetime_add,                               /* nb_add */
-    datetime_subtract,                          /* nb_subtract */
-    0,                                          /* nb_multiply */
-    0,                                          /* nb_remainder */
-    0,                                          /* nb_divmod */
-    0,                                          /* nb_power */
-    0,                                          /* nb_negative */
-    0,                                          /* nb_positive */
-    0,                                          /* nb_absolute */
-    0,                                          /* nb_bool */
+static PyType_Slot PyDateTime_DateTimeType_slots[] = {
+    {Py_tp_dealloc, (destructor)datetime_dealloc},
+    {Py_tp_repr, (reprfunc)datetime_repr},
+    {Py_nb_add, datetime_add},
+    {Py_nb_subtract, datetime_subtract},
+    {Py_tp_hash, (hashfunc)datetime_hash},
+    {Py_tp_str, (reprfunc)datetime_str},
+    {Py_tp_getattro, PyObject_GenericGetAttr},
+    {Py_tp_doc, datetime_doc},
+    {Py_tp_richcompare, datetime_richcompare},
+    {Py_tp_methods, datetime_methods},
+    {Py_tp_getset, datetime_getset},
+    {Py_tp_alloc, datetime_alloc},
+    {Py_tp_new, datetime_new},
+    {0, NULL}
 };
 
-static PyTypeObject PyDateTime_DateTimeType = {
-    PyVarObject_HEAD_INIT(NULL, 0)
-    "datetime.datetime",                        /* tp_name */
-    sizeof(PyDateTime_DateTime),                /* tp_basicsize */
-    0,                                          /* tp_itemsize */
-    (destructor)datetime_dealloc,               /* tp_dealloc */
-    0,                                          /* tp_vectorcall_offset */
-    0,                                          /* tp_getattr */
-    0,                                          /* tp_setattr */
-    0,                                          /* tp_as_async */
-    (reprfunc)datetime_repr,                    /* tp_repr */
-    &datetime_as_number,                        /* tp_as_number */
-    0,                                          /* tp_as_sequence */
-    0,                                          /* tp_as_mapping */
-    (hashfunc)datetime_hash,                    /* tp_hash */
-    0,                                          /* tp_call */
-    (reprfunc)datetime_str,                     /* tp_str */
-    PyObject_GenericGetAttr,                    /* tp_getattro */
-    0,                                          /* tp_setattro */
-    0,                                          /* tp_as_buffer */
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, /* tp_flags */
-    datetime_doc,                               /* tp_doc */
-    0,                                          /* tp_traverse */
-    0,                                          /* tp_clear */
-    datetime_richcompare,                       /* tp_richcompare */
-    0,                                          /* tp_weaklistoffset */
-    0,                                          /* tp_iter */
-    0,                                          /* tp_iternext */
-    datetime_methods,                           /* tp_methods */
-    0,                                          /* tp_members */
-    datetime_getset,                            /* tp_getset */
-    0,                                          /* tp_base; filled in
-                                                   PyInit__datetime */
-    0,                                          /* tp_dict */
-    0,                                          /* tp_descr_get */
-    0,                                          /* tp_descr_set */
-    0,                                          /* tp_dictoffset */
-    0,                                          /* tp_init */
-    datetime_alloc,                             /* tp_alloc */
-    datetime_new,                               /* tp_new */
-    0,                                          /* tp_free */
+static PyType_Spec PyDateTime_DateTimeType_spec = {
+    .name = "datetime.datetime",
+    .basicsize = sizeof(PyDateTime_DateTime),
+    .flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .slots = PyDateTime_DateTimeType_slots
 };
 
 /* ---------------------------------------------------------------------------
@@ -6481,18 +6345,18 @@ static PyMethodDef module_methods[] = {
  * Clients get at C API via PyDateTime_IMPORT, defined in datetime.h.
  */
 static inline PyDateTime_CAPI *
-get_datetime_capi(void)
+get_datetime_capi(_datetimemodule_state *state)
 {
     PyDateTime_CAPI *capi = PyMem_Malloc(sizeof(PyDateTime_CAPI));
     if (capi == NULL) {
         PyErr_NoMemory();
         return NULL;
     }
-    capi->DateType = &PyDateTime_DateType;
-    capi->DateTimeType = &PyDateTime_DateTimeType;
-    capi->TimeType = &PyDateTime_TimeType;
-    capi->DeltaType = &PyDateTime_DeltaType;
-    capi->TZInfoType = &PyDateTime_TZInfoType;
+    capi->DateType = state->PyDateTime_DateType;
+    capi->DateTimeType = state->PyDateTime_DateTimeType;
+    capi->TimeType = state->PyDateTime_TimeType;
+    capi->DeltaType = state->PyDateTime_DeltaType;
+    capi->TZInfoType = state->PyDateTime_TZInfoType;
     capi->Date_FromDate = new_date_ex;
     capi->DateTime_FromDateAndTime = new_datetime_ex;
     capi->Time_FromTime = new_time_ex;
@@ -6519,20 +6383,32 @@ datetime_destructor(PyObject *op)
 static int
 _datetime_exec(PyObject *module)
 {
+    _datetimemodule_state *state = get_datetime_state(module);
+    state->PyDateTime_DateType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_DateType_spec, NULL);
+    state->PyDateTime_DeltaType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_DeltaType_spec, NULL);
+    state->PyDateTime_TimeType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_TimeType_spec, NULL);
+    state->PyDateTime_TZInfoType =(PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_TZInfoType_spec, NULL);
+
+    state->PyDateTime_IsoCalendarDateType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_IsoCalendarDateType_spec, &PyTuple_Type);
+    state->PyDateTime_TimeZoneType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_TimeZoneType_spec, state->PyDateTime_TZInfoType);
+    state->PyDateTime_DateTimeType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_DateTimeType_spec, state->PyDateTime_DateType);
+
     // `&...` is not a constant expression according to a strict reading
     // of C standards. Fill tp_base at run-time rather than statically.
     // See https://bugs.python.org/issue40777
-    PyDateTime_IsoCalendarDateType.tp_base = &PyTuple_Type;
-    PyDateTime_TimeZoneType.tp_base = &PyDateTime_TZInfoType;
-    PyDateTime_DateTimeType.tp_base = &PyDateTime_DateType;
+
+    state->PyDateTime_IsoCalendarDateType->tp_base = &PyTuple_Type;
+    state->PyDateTime_TimeZoneType->tp_base = state->PyDateTime_TZInfoType;
+    state->PyDateTime_DateTimeType->tp_base = state->PyDateTime_DateType;
 
     PyTypeObject *types[] = {
-        &PyDateTime_DateType,
-        &PyDateTime_DateTimeType,
-        &PyDateTime_TimeType,
-        &PyDateTime_DeltaType,
-        &PyDateTime_TZInfoType,
-        &PyDateTime_TimeZoneType,
+        state->PyDateTime_DateType,
+        state->PyDateTime_DateTimeType,
+        state->PyDateTime_TimeType,
+        state->PyDateTime_DeltaType,
+        state->PyDateTime_TZInfoType,
+        state->PyDateTime_TimeZoneType,
+        // TODO: check state->PyDateTime_IsoCalendarDateType
     };
 
     for (size_t i = 0; i < Py_ARRAY_LENGTH(types); i++) {
@@ -6541,7 +6417,7 @@ _datetime_exec(PyObject *module)
         }
     }
 
-    if (PyType_Ready(&PyDateTime_IsoCalendarDateType) < 0) {
+    if (PyType_Ready(state->PyDateTime_IsoCalendarDateType) < 0) {
         return -1;
     }
 
@@ -6559,35 +6435,35 @@ _datetime_exec(PyObject *module)
     } while(0)
 
     /* timedelta values */
-    PyObject *d = PyDateTime_DeltaType.tp_dict;
-    DATETIME_ADD_MACRO(d, "resolution", new_delta(0, 0, 1, 0));
-    DATETIME_ADD_MACRO(d, "min", new_delta(-MAX_DELTA_DAYS, 0, 0, 0));
+    PyObject *d = state->PyDateTime_DeltaType->tp_dict;
+    DATETIME_ADD_MACRO(d, "resolution", new_delta(0, 0, 1, 0, state));
+    DATETIME_ADD_MACRO(d, "min", new_delta(-MAX_DELTA_DAYS, 0, 0, 0, state));
     DATETIME_ADD_MACRO(d, "max",
-                       new_delta(MAX_DELTA_DAYS, 24*3600-1, 1000000-1, 0));
+                       new_delta(MAX_DELTA_DAYS, 24*3600-1, 1000000-1, 0, state));
 
     /* date values */
-    d = PyDateTime_DateType.tp_dict;
-    DATETIME_ADD_MACRO(d, "min", new_date(1, 1, 1));
-    DATETIME_ADD_MACRO(d, "max", new_date(MAXYEAR, 12, 31));
-    DATETIME_ADD_MACRO(d, "resolution", new_delta(1, 0, 0, 0));
+    d = state->PyDateTime_DateType->tp_dict;
+    DATETIME_ADD_MACRO(d, "min", new_date(1, 1, 1, state));
+    DATETIME_ADD_MACRO(d, "max", new_date(MAXYEAR, 12, 31, state));
+    DATETIME_ADD_MACRO(d, "resolution", new_delta(1, 0, 0, 0, state));
 
     /* time values */
-    d = PyDateTime_TimeType.tp_dict;
-    DATETIME_ADD_MACRO(d, "min", new_time(0, 0, 0, 0, Py_None, 0));
-    DATETIME_ADD_MACRO(d, "max", new_time(23, 59, 59, 999999, Py_None, 0));
-    DATETIME_ADD_MACRO(d, "resolution", new_delta(0, 0, 1, 0));
+    d = state->PyDateTime_TimeType->tp_dict;
+    DATETIME_ADD_MACRO(d, "min", new_time(0, 0, 0, 0, Py_None, 0, state));
+    DATETIME_ADD_MACRO(d, "max", new_time(23, 59, 59, 999999, Py_None, 0, state));
+    DATETIME_ADD_MACRO(d, "resolution", new_delta(0, 0, 1, 0, state));
 
     /* datetime values */
-    d = PyDateTime_DateTimeType.tp_dict;
+    d = state->PyDateTime_DateTimeType->tp_dict;
     DATETIME_ADD_MACRO(d, "min",
-                       new_datetime(1, 1, 1, 0, 0, 0, 0, Py_None, 0));
+                       new_datetime(1, 1, 1, 0, 0, 0, 0, Py_None, 0, state));
     DATETIME_ADD_MACRO(d, "max", new_datetime(MAXYEAR, 12, 31, 23, 59, 59,
-                                              999999, Py_None, 0));
-    DATETIME_ADD_MACRO(d, "resolution", new_delta(0, 0, 1, 0));
+                                              999999, Py_None, 0, state));
+    DATETIME_ADD_MACRO(d, "resolution", new_delta(0, 0, 1, 0, state));
 
     /* timezone values */
-    d = PyDateTime_TimeZoneType.tp_dict;
-    PyObject *delta = new_delta(0, 0, 0, 0);
+    d = state->PyDateTime_TimeZoneType->tp_dict;
+    PyObject *delta = new_delta(0, 0, 0, 0, state);
     if (delta == NULL) {
         return -1;
     }
@@ -6607,7 +6483,7 @@ _datetime_exec(PyObject *module)
     /* bpo-37642: These attributes are rounded to the nearest minute for backwards
      * compatibility, even though the constructor will accept a wider range of
      * values. This may change in the future.*/
-    delta = new_delta(-1, 60, 0, 1); /* -23:59 */
+    delta = new_delta(-1, 60, 0, 1, state); /* -23:59 */
     if (delta == NULL) {
         return -1;
     }
@@ -6616,7 +6492,7 @@ _datetime_exec(PyObject *module)
     Py_DECREF(delta);
     DATETIME_ADD_MACRO(d, "min", x);
 
-    delta = new_delta(0, (23 * 60 + 59) * 60, 0, 0); /* +23:59 */
+    delta = new_delta(0, (23 * 60 + 59) * 60, 0, 0, state); /* +23:59 */
     if (delta == NULL) {
         return -1;
     }
@@ -6627,7 +6503,7 @@ _datetime_exec(PyObject *module)
 
     /* Epoch */
     PyDateTime_Epoch = new_datetime(1970, 1, 1, 0, 0, 0, 0,
-                                    PyDateTime_TimeZone_UTC, 0);
+                                    PyDateTime_TimeZone_UTC, 0, state);
     if (PyDateTime_Epoch == NULL) {
         return -1;
     }
@@ -6640,7 +6516,7 @@ _datetime_exec(PyObject *module)
         return -1;
     }
 
-    PyDateTime_CAPI *capi = get_datetime_capi();
+    PyDateTime_CAPI *capi = get_datetime_capi(state);
     if (capi == NULL) {
         return -1;
     }
@@ -6694,27 +6570,64 @@ _datetime_exec(PyObject *module)
     return 0;
 }
 
+static int
+_datetimemodule_traverse(PyObject *module, visitproc visit, void *arg)
+{
+    _datetimemodule_state *state = get_datetime_state(module);
+    Py_VISIT(state->PyDateTime_DateType);
+    Py_VISIT(state->PyDateTime_DateTimeType);
+    Py_VISIT(state->PyDateTime_DeltaType);
+    Py_VISIT(state->PyDateTime_IsoCalendarDateType);
+    Py_VISIT(state->PyDateTime_TimeType);
+    Py_VISIT(state->PyDateTime_TZInfoType);
+    Py_VISIT(state->PyDateTime_TimeZoneType);
+    return 0;
+}
+
+static int
+_datetimemodule_clear(PyObject *module)
+{
+    _datetimemodule_state *state = get_datetime_state(module);
+    Py_CLEAR(state->PyDateTime_DateType);
+    Py_CLEAR(state->PyDateTime_DateTimeType);
+    Py_CLEAR(state->PyDateTime_DeltaType);
+    Py_CLEAR(state->PyDateTime_IsoCalendarDateType);
+    Py_CLEAR(state->PyDateTime_TimeType);
+    Py_CLEAR(state->PyDateTime_TZInfoType);
+    Py_CLEAR(state->PyDateTime_TimeZoneType);
+    return 0;
+}
+
+static void
+_datetimemodule_free(void *module)
+{
+    _datetimemodule_clear((PyObject *)module);
+}
+
+static struct PyModuleDef_Slot _datetime_slots[] = {
+    {Py_mod_exec, _datetime_exec},
+    {0, NULL}
+};
+
+PyDoc_STRVAR(module_doc,
+"Fast implementation of the datetime type.");
+
 static struct PyModuleDef datetimemodule = {
     PyModuleDef_HEAD_INIT,
     .m_name = "_datetime",
-    .m_doc = "Fast implementation of the datetime type.",
-    .m_size = -1,
+    .m_doc = module_doc,
+    .m_size = sizeof(_datetimemodule_state),
     .m_methods = module_methods,
+    .m_slots = _datetime_slots,
+    .m_traverse = _datetimemodule_traverse,
+    .m_clear = _datetimemodule_clear,
+    .m_free = _datetimemodule_free,
 };
 
 PyMODINIT_FUNC
 PyInit__datetime(void)
 {
-    PyObject *mod = PyModule_Create(&datetimemodule);
-    if (mod == NULL)
-        return NULL;
-
-    if (_datetime_exec(mod) < 0) {
-        Py_DECREF(mod);
-        return NULL;
-    }
-
-    return mod;
+    return PyModuleDef_Init(&datetimemodule);
 }
 
 /* ---------------------------------------------------------------------------
