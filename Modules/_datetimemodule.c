@@ -23,23 +23,40 @@
 #  include <winsock2.h>         /* struct timeval */
 #endif
 
+/* We cant check type easily because of joining of module state, if the function that
+ * obtain module state is called with wrong arguments, just like number object, the program will crash.
+ * Check tp_name before check type is a simple way to ensure correctness of module state.
+ * Maybe there is a better way to modify type check marco.
+ */
+static inline int _PyType_NameCheck(PyTypeObject *type, const char *name) {
+    return (strcmp(type->tp_name, name) == 0);
+}
+
+#define PyType_NameCheck(type, name) _PyType_NameCheck(type, name)
+
 #define PyDate_Check(op, state) \
     PyObject_TypeCheck(op, (PyTypeObject *)(state)->PyDateTime_DateType)
+#define PyDate_NameCheck(op) PyType_NameCheck(op, "datetime.date")
 
 #define PyDateTime_Check(op, state) \
     PyObject_TypeCheck(op, (PyTypeObject *)(state)->PyDateTime_DateTimeType)
+#define PyDateTime_NameCheck(op) PyType_NameCheck(op, "datetime.datetime")
 
 #define PyTime_Check(op, state) \
     PyObject_TypeCheck(op, (PyTypeObject *)(state)->PyDateTime_TimeType)
+#define PyTime_NameCheck(op) PyType_NameCheck(op, "datetime.time")
 
 #define PyDelta_Check(op, state) \
     PyObject_TypeCheck(op, (PyTypeObject *)(state)->PyDateTime_DeltaType)
+#define PyDelta_NameCheck(op) PyType_NameCheck(op, "datetime.timedelta")
 
 #define PyTZInfo_Check(op, state) \
     PyObject_TypeCheck(op, (PyTypeObject *)(state)->PyDateTime_TZInfoType)
+#define PyTZInfo_NameCheck(op) PyType_NameCheck(op, "datetime.tzinfo")
 
 #define PyTimezone_Check(op, state) \
     PyObject_TypeCheck(op, (PyTypeObject *)(state)->PyDateTime_TimeZoneType)
+#define PyTimezone_NameCheck(op) PyType_NameCheck(op, "datetime.timezone")
 
 /*[clinic input]
 module datetime
@@ -893,7 +910,7 @@ static PyObject *
 new_date_subclass_ex(int year, int month, int day, PyObject *cls)
 {
     PyObject *result;
-    _datetimemodule_state *state = get_datetimemodule_state_by_class((PyTypeObject *)cls);
+    _datetimemodule_state *state = find_datetimemodule_state_by_type((PyTypeObject *)cls);
     // We have "fast path" constructors for two subclasses: date and datetime
     if ((PyTypeObject *)cls == state->PyDateTime_DateType) {
         result = new_date_ex(year, month, day, (PyTypeObject *)cls);
@@ -961,7 +978,7 @@ new_datetime_subclass_fold_ex(int year, int month, int day, int hour, int minute
                               int second, int usecond, PyObject *tzinfo,
                               int fold, PyObject *cls) {
     PyObject* dt;
-    _datetimemodule_state *state = get_datetimemodule_state_by_class((PyTypeObject *)cls);
+    _datetimemodule_state *state = find_datetimemodule_state_by_type((PyTypeObject *)cls);
 
     if ((PyTypeObject*)cls == state->PyDateTime_DateTimeType) {
         // Use the fast path constructor
@@ -1145,7 +1162,8 @@ new_timezone(PyObject *offset, PyObject *name)
 static int
 check_tzinfo_subclass(PyObject *p)
 {
-    if (p == Py_None || PyTZInfo_Check(p, find_datetimemodule_state_by_type(Py_TYPE(p))))
+    if (p == Py_None || (!PyTZInfo_NameCheck(Py_TYPE(p))) ||
+        PyTZInfo_Check(p, find_datetimemodule_state_by_type(Py_TYPE(p))))
         return 0;
     PyErr_Format(PyExc_TypeError,
                  "tzinfo argument must be None or of a tzinfo subclass, "
@@ -1183,14 +1201,14 @@ static PyObject *
 call_tzinfo_method(PyObject *tzinfo, const char *name, PyObject *tzinfoarg)
 {
     PyObject *offset;
-    _datetimemodule_state *state = find_datetimemodule_state_by_type(Py_TYPE(tzinfo));
-
     assert(tzinfo != NULL);
+    if (tzinfo == Py_None)
+        Py_RETURN_NONE;
+
+    _datetimemodule_state *state = find_datetimemodule_state_by_type(Py_TYPE(tzinfo));
     assert(PyTZInfo_Check(tzinfo, state) || tzinfo == Py_None);
     assert(tzinfoarg != NULL);
 
-    if (tzinfo == Py_None)
-        Py_RETURN_NONE;
     offset = PyObject_CallMethod(tzinfo, name, "O", tzinfoarg);
     if (offset == Py_None || offset == NULL)
         return offset;
@@ -2218,9 +2236,9 @@ static PyObject *
 delta_multiply(PyObject *left, PyObject *right)
 {
     PyObject *result = Py_NotImplemented;
-    _datetimemodule_state *state = find_datetimemodule_state_by_type(Py_TYPE(left));
-
-    if (PyDelta_Check(left, state)) {
+    // binary operation should check object type name frist
+    if (PyDelta_NameCheck(Py_TYPE(left)) &&
+        PyDelta_Check(left, find_datetimemodule_state_by_type(Py_TYPE(left)))) {
         /* delta * ??? */
         if (PyLong_Check(right))
             result = multiply_int_timedelta(right,
@@ -3082,7 +3100,12 @@ add_date_timedelta(PyDateTime_Date *date, PyDateTime_Delta *delta, int negate)
 static PyObject *
 date_add(PyObject *left, PyObject *right)
 {
-    _datetimemodule_state *state = find_datetimemodule_state_by_type(Py_TYPE(left));
+    _datetimemodule_state *state;
+    if (PyDate_NameCheck(Py_TYPE(left))) {
+        state = find_datetimemodule_state_by_type(Py_TYPE(left));
+    } else {
+        state = find_datetimemodule_state_by_type(Py_TYPE(right));
+    }
 
     if (PyDateTime_Check(left, state) || PyDateTime_Check(right, state))
         Py_RETURN_NOTIMPLEMENTED;
@@ -3111,7 +3134,12 @@ date_add(PyObject *left, PyObject *right)
 static PyObject *
 date_subtract(PyObject *left, PyObject *right)
 {
-    _datetimemodule_state *state = find_datetimemodule_state_by_type(Py_TYPE(left));
+    _datetimemodule_state *state;
+    if (PyDate_NameCheck(Py_TYPE(left))) {
+        state = find_datetimemodule_state_by_type(Py_TYPE(left));
+    } else {
+        state = find_datetimemodule_state_by_type(Py_TYPE(right));
+    }
 
     if (PyDateTime_Check(left, state) || PyDateTime_Check(right, state))
         Py_RETURN_NOTIMPLEMENTED;
@@ -5093,7 +5121,7 @@ datetime_combine(PyObject *cls, PyObject *args, PyObject *kw)
     PyObject *tzinfo = NULL;
     PyObject *result = NULL;
 
-    _datetimemodule_state *state = get_datetimemodule_state_by_class((PyTypeObject *)cls);
+    _datetimemodule_state *state = find_datetimemodule_state_by_type((PyTypeObject *)cls);
     if (PyArg_ParseTupleAndKeywords(args, kw, "O!O!|O:combine", keywords,
                                     state->PyDateTime_DateType, &date,
                                     state->PyDateTime_TimeType, &time, &tzinfo)) {
@@ -5184,7 +5212,7 @@ datetime_fromisoformat(PyObject *cls, PyObject *dtstr)
     int year = 0, month = 0, day = 0;
     int hour = 0, minute = 0, second = 0, microsecond = 0;
     int tzoffset = 0, tzusec = 0;
-    _datetimemodule_state *state = find_datetimemodule_state_by_type(Py_TYPE(cls));
+    _datetimemodule_state *state = find_datetimemodule_state_by_type((PyTypeObject *)cls);
 
     // date has a fixed length of 10
     int rv = parse_isoformat_date(p, &year, &month, &day);
@@ -5308,7 +5336,12 @@ add_datetime_timedelta(PyDateTime_DateTime *date, PyDateTime_Delta *delta,
 static PyObject *
 datetime_add(PyObject *left, PyObject *right)
 {
-    _datetimemodule_state *state = find_datetimemodule_state_by_type(Py_TYPE(left));
+    _datetimemodule_state *state;
+    if (PyDateTime_NameCheck(Py_TYPE(left))) {
+        state = find_datetimemodule_state_by_type(Py_TYPE(left));
+    } else {
+        state = find_datetimemodule_state_by_type(Py_TYPE(right));
+    }
 
     if (PyDateTime_Check(left, state)) {
         /* datetime + ??? */
@@ -5332,7 +5365,12 @@ static PyObject *
 datetime_subtract(PyObject *left, PyObject *right)
 {
     PyObject *result = Py_NotImplemented;
-    _datetimemodule_state *state = find_datetimemodule_state_by_type(Py_TYPE(left));
+    _datetimemodule_state *state;
+    if (PyDateTime_NameCheck(Py_TYPE(left))) {
+        state = find_datetimemodule_state_by_type(Py_TYPE(left));
+    } else {
+        state = find_datetimemodule_state_by_type(Py_TYPE(right));
+    }
 
     if (PyDateTime_Check(left, state)) {
         /* datetime - ??? */
@@ -6340,10 +6378,10 @@ The year, month and day arguments are required. tzinfo may be None, or an\n\
 instance of a tzinfo subclass. The remaining arguments may be ints.\n");
 
 static PyType_Slot PyDateTime_DateTimeType_slots[] = {
-    {Py_tp_dealloc, (destructor)datetime_dealloc},
-    {Py_tp_repr, (reprfunc)datetime_repr},
     {Py_nb_add, datetime_add},
     {Py_nb_subtract, datetime_subtract},
+    {Py_tp_dealloc, (destructor)datetime_dealloc},
+    {Py_tp_repr, (reprfunc)datetime_repr},
     {Py_tp_hash, (hashfunc)datetime_hash},
     {Py_tp_str, (reprfunc)datetime_str},
     {Py_tp_getattro, PyObject_GenericGetAttr},
