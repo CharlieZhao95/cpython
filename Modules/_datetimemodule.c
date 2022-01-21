@@ -893,7 +893,7 @@ static PyObject *
 new_date_subclass_ex(int year, int month, int day, PyObject *cls)
 {
     PyObject *result;
-    _datetimemodule_state *state = get_datetimemodule_state_by_class(cls);
+    _datetimemodule_state *state = get_datetimemodule_state_by_class((PyTypeObject *)cls);
     // We have "fast path" constructors for two subclasses: date and datetime
     if ((PyTypeObject *)cls == state->PyDateTime_DateType) {
         result = new_date_ex(year, month, day, (PyTypeObject *)cls);
@@ -961,7 +961,7 @@ new_datetime_subclass_fold_ex(int year, int month, int day, int hour, int minute
                               int second, int usecond, PyObject *tzinfo,
                               int fold, PyObject *cls) {
     PyObject* dt;
-    _datetimemodule_state *state = get_datetimemodule_state_by_class(cls);
+    _datetimemodule_state *state = get_datetimemodule_state_by_class((PyTypeObject *)cls);
 
     if ((PyTypeObject*)cls == state->PyDateTime_DateTimeType) {
         // Use the fast path constructor
@@ -1034,7 +1034,7 @@ new_time_ex(int hour, int minute, int second, int usecond,
 #define new_time(hh, mm, ss, us, tzinfo, fold, state)                       \
     new_time_ex2(hh, mm, ss, us, tzinfo, fold, state->PyDateTime_TimeType)
 
-/* Create a timedelta instance.  Normalize the members if normalize is
+/* Create a timedelta instance.  Normalize the members iff normalize is
  * true.  Passing false is a speed optimization, if you know for sure
  * that seconds and microseconds are already in their proper ranges.  In any
  * case, raises OverflowError and returns NULL if the normalized days is out
@@ -3312,7 +3312,7 @@ static PyMethodDef iso_calendar_date_methods[] = {
 
 static PyType_Slot PyDateTime_IsoCalendarDateType_slots[] = {
     {Py_tp_repr, (reprfunc)iso_calendar_date_repr},
-    {Py_tp_doc, iso_calendar_date__doc__},
+    {Py_tp_doc, (void *)iso_calendar_date__doc__},
     {Py_tp_methods, iso_calendar_date_methods},
     {Py_tp_getset, iso_calendar_date_getset},
     {Py_tp_new, iso_calendar_date_new},
@@ -3323,7 +3323,7 @@ static PyType_Spec PyDateTime_IsoCalendarDateType_spec = {
     .name = "datetime.IsoCalendarDate",
     .basicsize = sizeof(PyDateTime_IsoCalendarDate),
     .flags = Py_TPFLAGS_DEFAULT,
-    .slots = PyDateTime_DeltaType_slots
+    .slots = PyDateTime_IsoCalendarDateType_slots
 };
 
 /*[clinic input]
@@ -3785,7 +3785,7 @@ PyDoc_STR("Abstract base class for time zone info objects.");
 
 static PyType_Slot PyDateTime_TZInfoType_slots[] = {
     {Py_tp_getattro, PyObject_GenericGetAttr},
-    {Py_tp_doc, tzinfo_doc},
+    {Py_tp_doc, (void *)tzinfo_doc},
     {Py_tp_methods, tzinfo_methods},
     {Py_tp_new, PyType_GenericNew},
     {0, NULL}
@@ -3805,7 +3805,7 @@ timezone_new(PyTypeObject *type, PyObject *args, PyObject *kw)
 {
     PyObject *offset;
     PyObject *name = NULL;
-    _datetimemodule_state *state = PyType_GetModuleState(type);
+    _datetimemodule_state *state = find_datetimemodule_state_by_type(type);
     if (PyArg_ParseTupleAndKeywords(args, kw, "O!|U:timezone", timezone_kws,
                                     state->PyDateTime_DeltaType, &offset, &name))
         return new_timezone(offset, name);
@@ -4002,7 +4002,7 @@ static PyType_Slot PyDateTime_TimeZoneType_slots[] = {
     {Py_tp_hash, (hashfunc)timezone_hash},
     {Py_tp_str, (reprfunc)timezone_str},
     {Py_tp_getattro, PyObject_GenericGetAttr},
-    {Py_tp_doc, timezone_doc},
+    {Py_tp_doc, (void *)timezone_doc},
     {Py_tp_richcompare, (richcmpfunc)timezone_richcompare},
     {Py_tp_methods, timezone_methods},
     {Py_tp_new, timezone_new},
@@ -4649,7 +4649,7 @@ static PyType_Slot PyDateTime_TimeType_slots[] = {
     {Py_tp_hash, (hashfunc)time_hash},
     {Py_tp_str, (reprfunc)time_str},
     {Py_tp_getattro, PyObject_GenericGetAttr},
-    {Py_tp_doc, time_doc},
+    {Py_tp_doc, (void *)time_doc},
     {Py_tp_richcompare, time_richcompare},
     {Py_tp_methods, delta_methods},
     {Py_tp_getset, time_getset},
@@ -5093,7 +5093,7 @@ datetime_combine(PyObject *cls, PyObject *args, PyObject *kw)
     PyObject *tzinfo = NULL;
     PyObject *result = NULL;
 
-    _datetimemodule_state *state = (_datetimemodule_state *)PyType_GetModuleState(cls);
+    _datetimemodule_state *state = get_datetimemodule_state_by_class((PyTypeObject *)cls);
     if (PyArg_ParseTupleAndKeywords(args, kw, "O!O!|O:combine", keywords,
                                     state->PyDateTime_DateType, &date,
                                     state->PyDateTime_TimeType, &time, &tzinfo)) {
@@ -6347,7 +6347,7 @@ static PyType_Slot PyDateTime_DateTimeType_slots[] = {
     {Py_tp_hash, (hashfunc)datetime_hash},
     {Py_tp_str, (reprfunc)datetime_str},
     {Py_tp_getattro, PyObject_GenericGetAttr},
-    {Py_tp_doc, datetime_doc},
+    {Py_tp_doc, (void *)datetime_doc},
     {Py_tp_richcompare, datetime_richcompare},
     {Py_tp_methods, datetime_methods},
     {Py_tp_getset, datetime_getset},
@@ -6419,9 +6419,12 @@ _datetime_exec(PyObject *module)
     state->PyDateTime_TimeType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_TimeType_spec, NULL);
     state->PyDateTime_TZInfoType =(PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_TZInfoType_spec, NULL);
 
-    state->PyDateTime_IsoCalendarDateType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_IsoCalendarDateType_spec, &PyTuple_Type);
-    state->PyDateTime_TimeZoneType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_TimeZoneType_spec, state->PyDateTime_TZInfoType);
-    state->PyDateTime_DateTimeType = (PyTypeObject *)PyType_FromModuleAndSpec(module, &PyDateTime_DateTimeType_spec, state->PyDateTime_DateType);
+    state->PyDateTime_IsoCalendarDateType = (PyTypeObject *)PyType_FromModuleAndSpec(module,
+        &PyDateTime_IsoCalendarDateType_spec, (PyObject *)(&PyTuple_Type));
+    state->PyDateTime_TimeZoneType = (PyTypeObject *)PyType_FromModuleAndSpec(module,
+        &PyDateTime_TimeZoneType_spec, (PyObject *)(state->PyDateTime_TZInfoType));
+    state->PyDateTime_DateTimeType = (PyTypeObject *)PyType_FromModuleAndSpec(module,
+        &PyDateTime_DateTimeType_spec, (PyObject *)(state->PyDateTime_DateType));
 
     // `&...` is not a constant expression according to a strict reading
     // of C standards. Fill tp_base at run-time rather than statically.
