@@ -1374,7 +1374,12 @@ context_new(PyTypeObject *type, PyObject *args UNUSED, PyObject *kwds UNUSED)
     SdFlagAddr(self->flags) = &ctx->status;
 
     CtxCaps(self) = 1;
+
     self->tstate = NULL;
+    // If this statement is added, a segfault will be raised.
+    if (type == state->PyDecContext_Type) {
+        PyObject_GC_Track(self);
+    }
 
     return (PyObject *)self;
 }
@@ -2023,6 +2028,10 @@ PyDecType_New(PyTypeObject *type)
     MPD(dec)->len = 0;
     MPD(dec)->alloc = _Py_DEC_MINALLOC;
     MPD(dec)->data = dec->data;
+
+    if (type == state->PyDec_Type) {
+        PyObject_GC_Track(dec);
+    }
 
     return (PyObject *)dec;
 }
